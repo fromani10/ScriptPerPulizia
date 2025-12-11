@@ -6,12 +6,71 @@
   - Se non passi nessun parametro, parte dalla cartella corrente.
   - Cerca in tutte le sottocartelle per nomi esatti: bin, obj, .vs
   - Mostra un riepilogo, chiede conferma e poi cancella.
+  - Prima di tutto, prova a chiudere i processi di sviluppo per evitare file bloccati.
 #>
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [string]$RootPath = (Get-Location).Path
 )
+
+# -----------------------------
+# 0. Terminazione processi di sviluppo
+# -----------------------------
+Write-Host "Fase 0: controllo processi aperti (Visual Studio, dotnet, msbuild, node, ecc.)..." -ForegroundColor Yellow
+
+# Elenco dei processi che tipicamente bloccano bin/obj/.vs
+$devProcesses = @(
+    'devenv',        # Visual Studio
+    'devenv64',      # VS 2022 a 64 bit
+    'MSBuild',       # msbuild
+    'dotnet',        # processi dotnet
+    'VBCSCompiler',  # compilatore Roslyn
+    'node',          # Node.js
+    'npm',           # npm
+    'npx',           # npx
+    'Code',          # VS Code
+    'Rider64'        # JetBrains Rider
+)
+
+# Trova i processi effettivamente attivi
+$runningDevProcs = foreach ($name in $devProcesses) {
+    Get-Process -Name $name -ErrorAction SilentlyContinue
+}
+
+if ($runningDevProcs -and $runningDevProcs.Count -gt 0) {
+    Write-Host "Sono stati trovati i seguenti processi che potrebbero bloccare i file:" -ForegroundColor Yellow
+    $runningDevProcs |
+        Select-Object Name, Id, MainWindowTitle |
+        Sort-Object Name, Id |
+        ForEach-Object {
+            Write-Host (" - {0} (Id: {1}) {2}" -f $_.Name, $_.Id, $_.MainWindowTitle)
+        }
+
+    $killAnswer = Read-Host "Vuoi CHIUDERE questi processi prima di procedere? (s/N)"
+
+    if ($killAnswer -in @('s','S','y','Y')) {
+        foreach ($proc in $runningDevProcs) {
+            try {
+                Write-Host "Chiudo processo: $($proc.Name) (Id: $($proc.Id))..." -ForegroundColor DarkYellow
+                Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                Write-Host "   -> Terminato" -ForegroundColor Green
+            }
+            catch {
+                Write-Host "   -> ERRORE nel terminare $($proc.Name) (Id: $($proc.Id)): $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+
+        Write-Host "Attendo qualche secondo per il rilascio delle risorse..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 3
+    }
+    else {
+        Write-Host "Processi lasciati aperti su richiesta dell'utente." -ForegroundColor DarkYellow
+    }
+}
+else {
+    Write-Host "Nessun processo di sviluppo rilevante trovato in esecuzione." -ForegroundColor Green
+}
 
 # -----------------------------
 # 1. Validazione percorso radice
@@ -34,8 +93,7 @@ $targetNames = @('bin', 'obj', '.vs')   # Se vuoi aggiungerne altre, mettile qui
 # -----------------------------
 Write-Host "Ricerca di cartelle: $($targetNames -join ', ') ..." -ForegroundColor Yellow
 
-# IMPORTANTE: -ErrorAction SilentlyContinue evita di bloccare lo script
-# su cartelle con accesso negato (es. $RECYCLE.BIN, System Volume Information, ecc.)
+# -ErrorAction SilentlyContinue evita blocchi su cartelle con accesso negato
 $folders = Get-ChildItem -Path $RootPath -Directory -Recurse -Force -ErrorAction SilentlyContinue |
            Where-Object { $targetNames -contains $_.Name }
 
