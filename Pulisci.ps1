@@ -150,3 +150,6 @@ foreach ($folder in $folders) {
 
 Write-Host ""
 Write-Host "Pulizia completata." -ForegroundColor Green
+
+
+Read-Host "Premi INVIO per chiudere"
